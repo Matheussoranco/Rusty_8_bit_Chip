@@ -56,12 +56,15 @@ fn main() {
     let mut cpu     = cpu::Cpu::new();
     let audio       = audio::Audio::new();
 
-    memory.load_rom(&rom);
+    if let Err(e) = memory.load_rom(&rom) {
+        eprintln!("Failed to load ROM: {}", e);
+        std::process::exit(1);
+    }
 
     let win_w = DISPLAY_WIDTH  * SCALE;
     let win_h = DISPLAY_HEIGHT * SCALE;
 
-    let mut window = Window::new(
+    let mut window = match Window::new(
         &format!("CHIP-8 — {}", Path::new(rom_path).file_name().unwrap_or_default().to_string_lossy()),
         win_w,
         win_h,
@@ -69,7 +72,14 @@ fn main() {
             scale: Scale::X1,
             ..WindowOptions::default()
         },
-    ).expect("Failed to create window");
+    ) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("Could not open a display window ({})", e);
+            eprintln!("If you are on headless Linux, run with xvfb-run. On Windows, ensure a desktop session is available.");
+            std::process::exit(2);
+        }
+    };
 
     window.limit_update_rate(None); // We manage our own timing.
 
@@ -87,9 +97,20 @@ fn main() {
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let now = Instant::now();
 
-        // --- CPU ticks ---
-        if now.duration_since(last_cpu_tick) >= cpu_period {
-            cpu.execute_cycle(&mut memory, &mut display, &input, &mut timers);
+        // --- CPU ticks (catch-up: executa todos os ticks devidos, limitado
+        // para não espiralar após stalls longos) ---
+        let mut steps = 0;
+        while now.duration_since(last_cpu_tick) >= cpu_period && steps < 32 {
+            if let Err(e) = cpu.execute_cycle(&mut memory, &mut display, &input, &mut timers) {
+                eprintln!("Emulation halted: {}", e);
+                eprintln!("ROM may be corrupt or use an unsupported opcode. Exiting.");
+                std::process::exit(1);
+            }
+            last_cpu_tick += cpu_period;
+            steps += 1;
+        }
+        if steps == 32 {
+            // Stall longo: abandona o atraso acumulado em vez de congelar.
             last_cpu_tick = now;
         }
 
@@ -101,9 +122,10 @@ fn main() {
             // Render display when dirty
             if display.dirty {
                 let buf = display.render_to_buffer();
-                window
-                    .update_with_buffer(&buf, win_w, win_h)
-                    .expect("Window update failed");
+                if let Err(e) = window.update_with_buffer(&buf, win_w, win_h) {
+                    eprintln!("Display update failed ({}). Exiting.", e);
+                    std::process::exit(1);
+                }
                 display.dirty = false;
             } else {
                 window.update();
@@ -123,7 +145,10 @@ fn main() {
                 memory  = memory::Memory::new();
                 display = display::Display::new();
                 timers  = timers::Timers::new();
-                memory.load_rom(&rom);
+                memory.load_rom(&rom).unwrap_or_else(|e| {
+                    eprintln!("Failed to load ROM: {}", e);
+                    std::process::exit(1);
+                });
             }
 
             if f5 && !f5_prev {
@@ -137,8 +162,10 @@ fn main() {
             if f9 && !f9_prev {
                 match SaveState::load_from_file(Path::new(SAVE_STATE_PATH)) {
                     Ok(state) => {
-                        state.restore(&mut cpu, &mut memory, &mut display, &mut timers);
-                        println!("State loaded from {}", SAVE_STATE_PATH);
+                        match state.restore(&mut cpu, &mut memory, &mut display, &mut timers) {
+                            Ok(_) => println!("State loaded from {}", SAVE_STATE_PATH),
+                            Err(e) => eprintln!("Load failed: savestate is invalid ({})", e),
+                        }
                     }
                     Err(e) => eprintln!("Load failed: {}", e),
                 }

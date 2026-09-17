@@ -2,8 +2,8 @@ pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
 pub const SCALE: usize = 12;
 
-const COLOR_ON: u32 = 0x00F8F8F2;  // bright white
-const COLOR_OFF: u32 = 0x00282A36; // dark background
+const COLOR_ON: u32 = 0xFFF8F8F2;  // bright white (alpha FF)
+const COLOR_OFF: u32 = 0xFF282A36; // dark background (alpha FF)
 
 pub struct Display {
     pub pixels: [bool; DISPLAY_WIDTH * DISPLAY_HEIGHT],

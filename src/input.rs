@@ -41,8 +41,14 @@ impl Input {
         }
     }
 
+    /// Returns true if the given CHIP-8 key (0x0-0xF) is pressed.
+    /// Values > 0xF are invalid (e.g. an unchecked Vx) and return false
+    /// instead of silently wrapping via `& 0xF`.
     pub fn is_key_pressed(&self, key: u8) -> bool {
-        self.keys[key as usize & 0xF]
+        if key > 0xF {
+            return false;
+        }
+        self.keys[key as usize]
     }
 
     /// Returns the first pressed key index, or None.

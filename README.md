@@ -176,6 +176,11 @@ All 35 canonical opcodes are implemented. Notation: `x`, `y` = nibble register i
 | `Fx55`   | LD [I], Vx      | mem[I..I+x] ← V0..Vx |
 | `Fx65`   | LD Vx, [I]      | V0..Vx ← mem[I..I+x] |
 
+> **Jump guard.** `1nnn`, `2nnn` and the computed `Bnnn` target with an
+> address `< 0x200` are rejected (CPU halts with an error) instead of
+> entering the reserved interpreter/font area (`0x000–0x1FF`). ROMs live at
+> `0x200+`; a jump below that is a corrupt program, not a feature.
+
 ---
 
 ## Execution Pipeline
@@ -200,6 +205,8 @@ execute_cycle()
 `Fx0A` is the only blocking instruction. Rather than spin-waiting on the CPU thread, the implementation stores the target register index in `waiting_for_key: Option<u8>`. On every subsequent cycle, `execute_cycle` polls `input.get_pressed_key()` before fetching the next opcode. When a key is detected the value is committed to the register and the field is cleared, resuming normal execution.
 
 This design avoids any platform-specific blocking primitive and integrates cleanly with the single-threaded event loop.
+
+> **Level-triggered, not edge-triggered.** `Fx0A` resumes on *level*: `get_pressed_key()` returns the first currently-held key, so holding a key across the wait satisfies the instruction immediately. This contrasts with the F1/F5/F9 hotkeys in `main.rs`, which are *edge-triggered* (`pressed && !prev`) precisely so holding F5 does not write dozens of savestates.
 
 ---
 
@@ -309,18 +316,27 @@ The complete emulator state can be captured and restored at any point. Serializa
 
 ```rust
 struct SaveState {
+    version:          u32,        // SAVE_FORMAT_VERSION (currently 1)
     v:                [u8; 16],
     i:                u16,
     pc:               u16,
     sp:               u8,
     stack:            [u16; 16],
     waiting_for_key:  Option<u8>,
-    ram:              Vec<u8>,      // 4096 bytes
-    pixels:           Vec<bool>,    // 2048 bools
+    ram:              [u8; 4096],
+    pixels:           [bool; 2048],
     delay:            u8,
     sound:            u8,
+    checksum:         u64,        // FNV-1a over every field above
 }
 ```
+
+> **Breaking-change policy.** `version` is checked first on load and any
+> mismatch is rejected (`unsupported savestate version`). `sp`/`pc`/`I` ranges
+> and an FNV-1a `checksum` are verified next, so a truncated, hand-edited, or
+> cross-version `savestate.bin` fails with `InvalidData` instead of resuming
+> corrupt state. Bumping `SAVE_FORMAT_VERSION` therefore invalidates all older
+> files by design — keep one ROM per working directory or re-save after upgrade.
 
 Serialized size is approximately 6.2 KB per slot. States are written to `savestate.bin` in the working directory.
 
