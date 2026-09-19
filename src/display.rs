@@ -66,6 +66,12 @@ impl Display {
 
     #[allow(dead_code)]
     pub fn get_pixel(&self, x: usize, y: usize) -> bool {
+        // Fora dos limites retorna false em vez de entrar em pânico com
+        // índice inválido: chamadores de teste/debug podem sondar bordas
+        // (ex.: x == DISPLAY_WIDTH após wrap) sem derrubar o emulador.
+        if x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT {
+            return false;
+        }
         self.pixels[y * DISPLAY_WIDTH + x]
     }
 }

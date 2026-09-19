@@ -175,6 +175,9 @@ impl Cpu {
                 self.v[0xF] = (!borrow) as u8;
             }
             (0x8, _, _, 0x6) => {
+                // Variante COSMAC VIP: desloca Vx in-place, ignora Vy.
+                // (CHIP-48/SUPER-CHIP deslocavam Vy para Vx; ver README
+                // "Known Behavioral Quirks".)
                 let lsb = self.v[x as usize] & 0x1;
                 self.v[x as usize] >>= 1;
                 self.v[0xF] = lsb;
@@ -185,6 +188,8 @@ impl Cpu {
                 self.v[0xF] = (!borrow) as u8;
             }
             (0x8, _, _, 0xE) => {
+                // Variante COSMAC VIP: desloca Vx in-place, ignora Vy
+                // (ver nota em 8xy6 e README "Known Behavioral Quirks").
                 let msb = (self.v[x as usize] & 0x80) >> 7;
                 self.v[x as usize] <<= 1;
                 self.v[0xF] = msb;
@@ -282,7 +287,9 @@ impl Cpu {
                     format!("Fx33 BCD write OOB at I+2={:#06X}: {}", self.i + 2, e)
                 })?;
             }
-            // Fx55 — LD [I], Vx  (store V0..Vx)
+            // Fx55 — LD [I], Vx  (store V0..Vx; variante CHIP-48: I NÃO é
+            // modificado — o COSMAC VIP original incrementava I a cada
+            // registrador; ver README "Known Behavioral Quirks".)
             (0xF, _, 0x5, 0x5) => {
                 for reg in 0..=(x as usize) {
                     memory.write_byte(self.i + reg as u16, self.v[reg]).map_err(|e| {
@@ -290,7 +297,7 @@ impl Cpu {
                     })?;
                 }
             }
-            // Fx65 — LD Vx, [I]  (load V0..Vx)
+            // Fx65 — LD Vx, [I]  (load V0..Vx; idem Fx55: I preservado)
             (0xF, _, 0x6, 0x5) => {
                 for reg in 0..=(x as usize) {
                     let b = memory.read_byte(self.i + reg as u16).map_err(|e| {
@@ -374,12 +381,27 @@ mod tests {
     }
 
     #[test]
-    fn op_bnnn_masks_to_12_bits() {
-        // V0=0xFF, nnn=0xFFF -> (0xFFF+0xFF)&0xFFF = 0x0FE
+    fn op_bnnn_jumps_to_nnn_plus_v0() {
+        // Caso válido (>=0x200): PC = nnn + V0 = 0x2FF + 0x01 = 0x300.
+        // (Qualquer soma que estoure 12 bits cai em 0x000–0x0FE e é
+        // rejeitada pela guarda — ver teste abaixo; por isso o wrap só é
+        // observável via rejeição, nunca via salto bem-sucedido.)
+        let (mut cpu, mut mem, mut disp, input, mut timers) = harness(0xB2FF);
+        cpu.v[0] = 0x01;
+        cpu.execute_cycle(&mut mem, &mut disp, &input, &mut timers).unwrap();
+        assert_eq!(cpu.pc, 0x300);
+    }
+
+    #[test]
+    fn op_bnnn_wrap_into_reserved_area_is_rejected() {
+        // (0xFFF + 0xFF) & 0xFFF = 0x0FE: wrap correto, mas o alvo cai na
+        // área reservada do interpretador, então a guarda deve rejeitar
+        // (CPU halted) em vez de saltar.
         let (mut cpu, mut mem, mut disp, input, mut timers) = harness(0xBFFF);
         cpu.v[0] = 0xFF;
-        cpu.execute_cycle(&mut mem, &mut disp, &input, &mut timers).unwrap();
-        assert_eq!(cpu.pc, 0x0FE);
+        let res = cpu.execute_cycle(&mut mem, &mut disp, &input, &mut timers);
+        assert!(res.is_err());
+        assert!(cpu.halted);
     }
 
     #[test]

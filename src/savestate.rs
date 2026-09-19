@@ -25,6 +25,12 @@ pub struct SaveState {
 
 pub const SAVE_FORMAT_VERSION: u32 = 1;
 
+/// Tamanho máximo aceito ao carregar um savestate (64 KiB; o estado
+/// serializado tem ~6,2 KiB). Barrar arquivos gigantes antes de ler evita
+/// que um `savestate.bin` trocado por engano (ou malicioso) estoure a
+/// memória com `fs::read` irrestrito.
+pub const MAX_SAVESTATE_BYTES: u64 = 64 * 1024;
+
 fn checksum(
     version: u32,
     v: &[u8; 16],
@@ -182,10 +188,25 @@ impl SaveState {
         let bytes = bincode::serialize(self).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
         })?;
-        fs::write(path, bytes)
+        // Escrita atômica: grava num temporário no mesmo diretório e
+        // renomeia por cima. Se o processo morrer no meio, o savestate
+        // anterior continua intacto em vez de ficar truncado.
+        let tmp = path.with_extension("tmp");
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, path)
     }
 
     pub fn load_from_file(path: &Path) -> std::io::Result<Self> {
+        let len = fs::metadata(path)?.len();
+        if len > MAX_SAVESTATE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "savestate too large ({} bytes, max {}): refusing to load",
+                    len, MAX_SAVESTATE_BYTES
+                ),
+            ));
+        }
         let bytes = fs::read(path)?;
         let state: Self = bincode::deserialize(&bytes).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())

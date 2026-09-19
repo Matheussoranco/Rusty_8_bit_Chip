@@ -18,7 +18,10 @@ const TIMER_HZ: u64 = 60;
 const SAVE_STATE_PATH: &str = "savestate.bin";
 
 fn print_usage() {
-    eprintln!("Usage: chip8 <rom_path>");
+    eprintln!("Usage: chip8 <rom_path> [--save <savestate_path>]");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  --save <path>   savestate file (default: ./savestate.bin)");
     eprintln!();
     eprintln!("Controls:");
     eprintln!("  CHIP-8 keypad → Keyboard");
@@ -41,6 +44,29 @@ fn main() {
     }
 
     let rom_path = &args[1];
+    // `--save <path>` opcional em qualquer posição após o ROM.
+    let mut save_path = SAVE_STATE_PATH.to_string();
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--save" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("--save requires a path argument");
+                    print_usage();
+                    std::process::exit(1);
+                }
+                save_path = args[i].clone();
+            }
+            other => {
+                eprintln!("Unknown argument '{}'", other);
+                print_usage();
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+    let save_path = Path::new(&save_path);
     let rom = match fs::read(rom_path) {
         Ok(data) => data,
         Err(e) => {
@@ -153,17 +179,17 @@ fn main() {
 
             if f5 && !f5_prev {
                 let state = SaveState::capture(&cpu, &memory, &display, &timers);
-                match state.save_to_file(Path::new(SAVE_STATE_PATH)) {
-                    Ok(_)  => println!("State saved to {}", SAVE_STATE_PATH),
+                match state.save_to_file(save_path) {
+                    Ok(_)  => println!("State saved to {}", save_path.display()),
                     Err(e) => eprintln!("Save failed: {}", e),
                 }
             }
 
             if f9 && !f9_prev {
-                match SaveState::load_from_file(Path::new(SAVE_STATE_PATH)) {
+                match SaveState::load_from_file(save_path) {
                     Ok(state) => {
                         match state.restore(&mut cpu, &mut memory, &mut display, &mut timers) {
-                            Ok(_) => println!("State loaded from {}", SAVE_STATE_PATH),
+                            Ok(_) => println!("State loaded from {}", save_path.display()),
                             Err(e) => eprintln!("Load failed: savestate is invalid ({})", e),
                         }
                     }

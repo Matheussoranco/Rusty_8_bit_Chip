@@ -7,6 +7,16 @@ pub struct Audio {
     pub beeping: Arc<AtomicBool>,
 }
 
+/// Callback de erro das streams cpal.
+///
+/// eprintln é intencional aqui: o callback roda na thread de áudio do cpal,
+/// sem acesso ao estado do emulador e com assinatura `FnMut(StreamError)`
+/// sem retorno propagável. Logar no stderr é o único canal disponível; o
+/// beep simplesmente continua no próximo buffer.
+fn audio_err_callback(err: cpal::StreamError) {
+    eprintln!("Audio stream error: {}", err);
+}
+
 impl Audio {
     pub fn new() -> Self {
         let beeping = Arc::new(AtomicBool::new(false));
@@ -48,7 +58,7 @@ impl Audio {
                             }
                         }
                     },
-                    |err| eprintln!("Audio stream error: {}", err),
+                    audio_err_callback,
                     None,
                 ).ok()
             }
@@ -70,7 +80,7 @@ impl Audio {
                             }
                         }
                     },
-                    |err| eprintln!("Audio stream error: {}", err),
+                    audio_err_callback,
                     None,
                 ).ok()
             }
@@ -92,7 +102,7 @@ impl Audio {
                             }
                         }
                     },
-                    |err| eprintln!("Audio stream error: {}", err),
+                    audio_err_callback,
                     None,
                 ).ok()
             }
