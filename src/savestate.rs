@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use serde_big_array::BigArray;
 use std::fs;
 use std::path::Path;
 
@@ -16,11 +17,67 @@ pub struct SaveState {
     pub sp: u8,
     pub stack: [u16; 16],
     pub waiting_for_key: Option<u8>,
+    #[serde(with = "BigArray")]
     pub ram: [u8; 4096],
+    #[serde(with = "BigArray")]
     pub pixels: [bool; DISPLAY_WIDTH * DISPLAY_HEIGHT],
     pub delay: u8,
     pub sound: u8,
     pub checksum: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn large_arrays_roundtrip_and_restore_without_losing_tail_values() {
+        let mut cpu = Cpu::new();
+        cpu.v[15] = 91;
+        cpu.i = 4095;
+        cpu.waiting_for_key = Some(14);
+        let mut memory = Memory::new();
+        memory.ram[4095] = 173;
+        let mut display = Display::new();
+        display.pixels[DISPLAY_WIDTH * DISPLAY_HEIGHT - 1] = true;
+        let mut timers = Timers::new();
+        timers.delay = 9;
+        timers.sound = 4;
+        let saved = SaveState::capture(&cpu, &memory, &display, &timers);
+        let bytes = bincode::serialize(&saved).unwrap();
+        let loaded: SaveState = bincode::deserialize(&bytes).unwrap();
+        let mut restored_cpu = Cpu::new();
+        let mut restored_memory = Memory::new();
+        let mut restored_display = Display::new();
+        let mut restored_timers = Timers::new();
+        loaded.restore(&mut restored_cpu, &mut restored_memory,
+                       &mut restored_display, &mut restored_timers).unwrap();
+        assert_eq!(restored_cpu.v, cpu.v);
+        assert_eq!(restored_cpu.waiting_for_key, Some(14));
+        assert_eq!(restored_cpu.i, 4095);
+        assert_eq!(restored_memory.ram, memory.ram);
+        assert_eq!(restored_display.pixels, display.pixels);
+        assert_eq!(restored_timers.delay, 9);
+        assert_eq!(restored_timers.sound, 4);
+        assert!(restored_display.dirty);
+        assert!(bincode::deserialize::<SaveState>(&bytes[..bytes.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn invalid_state_never_partially_modifies_the_emulator() {
+        let mut cpu = Cpu::new();
+        let mut memory = Memory::new();
+        let mut display = Display::new();
+        let mut timers = Timers::new();
+        let mut state = SaveState::capture(&cpu, &memory, &display, &timers);
+        state.ram[4095] ^= 1;
+        assert!(state.restore(&mut cpu, &mut memory, &mut display, &mut timers).is_err());
+        assert_eq!(memory.ram[4095], 0);
+        assert_eq!(cpu.pc, 0x200);
+        assert!(!display.dirty);
+        state.version += 1;
+        assert!(state.validate().unwrap_err().contains("unsupported"));
+    }
 }
 
 pub const SAVE_FORMAT_VERSION: u32 = 1;
